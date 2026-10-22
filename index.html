@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACC/ISA · Addressing Quiz</title>
+  <meta name="description" content="A minimal 3D quiz on single-accumulator architecture: direct and indirect addressing.">
+  <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="stage" aria-hidden="true"></canvas>
+
+  <main class="ui">
+    <header class="bar">
+      <div class="brand">ACC<span>/</span>ISA</div>
+      <div class="stats" aria-live="polite">
+        <div class="stat">
+          <span>Level</span>
+          <b id="stat-level">1</b>
+          <small id="stat-level-name">Warm-up</small>
+          <i class="pips" id="pips" aria-hidden="true"><u></u><u></u><u></u></i>
+        </div>
+        <div class="stat"><span>Streak</span><b id="stat-streak">0</b></div>
+        <div class="stat"><span>Score</span><b id="stat-score">0</b></div>
+      </div>
+      <button class="ghost" id="btn-isa" type="button" aria-expanded="false" aria-controls="sheet">ISA</button>
+    </header>
+
+    <section class="prompt" aria-label="Current instruction">
+      <div class="prompt-label">Instruction</div>
+      <div class="prompt-hex" id="instr">0000</div>
+      <div class="prompt-sub">AC <b id="ac-before">0000</b></div>
+    </section>
+
+    <div class="toast" id="toast" role="status"></div>
+
+    <div class="dock">
+      <section class="result" id="result" hidden aria-live="polite"></section>
+
+      <form class="answer" id="answer" autocomplete="off" novalidate>
+        <label class="field">
+          <span>AC</span>
+          <input id="in-ac" inputmode="text" maxlength="4" spellcheck="false" autocapitalize="characters" placeholder="0000" aria-label="Accumulator after execution, hexadecimal">
+        </label>
+        <label class="field" id="field-ea">
+          <span>Address</span>
+          <input id="in-ea" inputmode="text" maxlength="4" spellcheck="false" autocapitalize="characters" placeholder="0000" aria-label="Effective address, hexadecimal">
+        </label>
+        <label class="field">
+          <span id="lbl-mem">M[EA]</span>
+          <input id="in-mem" inputmode="text" maxlength="4" spellcheck="false" autocapitalize="characters" placeholder="0000" aria-label="Memory at the effective address after execution, hexadecimal">
+        </label>
+        <button class="primary" id="btn-submit" type="submit">Check <kbd>↵</kbd></button>
+      </form>
+    </div>
+  </main>
+
+  <aside class="sheet" id="sheet" hidden aria-label="Instruction set reference">
+    <h2>Instruction set</h2>
+    <p class="note">16-bit word · first hex digit selects op and mode, last three digits are the address field.</p>
+    <table>
+      <thead><tr><th>Hex</th><th>Op</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td>0 · 8</td><td>AND</td><td>AC ← AC ∧ M</td></tr>
+        <tr><td>1 · 9</td><td>ADD</td><td>AC ← AC + M</td></tr>
+        <tr><td>2 · A</td><td>LDA</td><td>AC ← M</td></tr>
+        <tr><td>3 · B</td><td>STA</td><td>M ← AC</td></tr>
+        <tr><td>4 · C</td><td>SUB</td><td>AC ← AC − M</td></tr>
+        <tr><td>5 · D</td><td>OR</td><td>AC ← AC ∨ M</td></tr>
+        <tr><td>6 · E</td><td>XOR</td><td>AC ← AC ⊕ M</td></tr>
+        <tr><td>7 · F</td><td>XCH</td><td>AC ↔ M</td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li><b>0–7</b> direct: EA = address field</li>
+      <li><b>8–F</b> indirect: EA = low 12 bits of M[address field]</li>
+      <li>M means M[EA] · arithmetic wraps at 16 bits</li>
+    </ul>
+  </aside>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
