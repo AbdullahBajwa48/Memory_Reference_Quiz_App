@@ -7,13 +7,13 @@
 
   const MASK = 0xFFFF;
   const ADDR = 0x0FFF;
-  const OPS = ['AND', 'ADD', 'LDA', 'STA', 'SUB', 'OR', 'XOR', 'XCH'];
-  const SYMBOL = { 0: 'AND', 1: '+', 4: '−', 5: 'OR', 6: 'XOR' };
+  const OPS = ['AND', 'ADD', 'LDA', 'STA', 'BUN', 'BSA', 'ISZ'];
 
   const parse = (s) => parseInt(s, 16) & MASK;
   const hex = (n, w = 4) => (n >>> 0).toString(16).toUpperCase().padStart(w, '0').slice(-w);
 
-  /* Word layout: [I:1][op:3][address:12]. I = 1 → indirect (EA = low 12 bits of M[address]). */
+  /* Word layout: [I:1][op:3][address:12]. I = 1 → indirect (EA = low 12 bits of M[address]).
+   * The PC given in each question already points at the next instruction. */
   function execute(q) {
     const base = parse(q.b);
     const mem = q.m.map(parse);
@@ -25,24 +25,27 @@
     const ea = indirect ? mem[operand - base] & ADDR : operand;
     const slot = ea - base;
     const ac0 = parse(q.a);
+    const e0 = q.e === '1' ? 1 : 0;
+    const pc0 = parse(q.p) & ADDR;
     const m0 = mem[slot];
     let ac = ac0;
+    let e = e0;
+    let pc = pc0;
     let m = m0;
 
     switch (op) {
       case 0: ac = ac0 & m0; break;
-      case 1: ac = (ac0 + m0) & MASK; break;
+      case 1: { const sum = ac0 + m0; ac = sum & MASK; e = sum > MASK ? 1 : 0; break; }
       case 2: ac = m0; break;
       case 3: m = ac0; break;
-      case 4: ac = (ac0 - m0) & MASK; break;
-      case 5: ac = ac0 | m0; break;
-      case 6: ac = ac0 ^ m0; break;
-      default: ac = m0; m = ac0; // XCH
+      case 4: pc = ea; break;
+      case 5: m = pc0; pc = (ea + 1) & ADDR; break;
+      default: m = (m0 + 1) & MASK; if (m === 0) pc = (pc0 + 1) & ADDR; // ISZ
     }
 
     return {
       base, mem, word, indirect, op, name: OPS[op], operand, ptr, ea, slot,
-      ac0, m0, ac, m, reads: op !== 3, writes: op === 3 || op === 7,
+      ac0, e0, pc0, m0, ac, e, pc, m,
     };
   }
 
@@ -50,152 +53,159 @@
     const route = r.indirect
       ? `M[${hex(r.ptr)}] = ${hex(r.mem[r.ptr - r.base])} → EA ${hex(r.ea)}`
       : `EA ${hex(r.ea)}`;
-    let effect;
-    if (r.op === 2) effect = `AC ← M[${hex(r.ea)}] = ${hex(r.m0)}`;
-    else if (r.op === 3) effect = `M[${hex(r.ea)}] ← AC = ${hex(r.ac0)}`;
-    else if (r.op === 7) effect = `AC ↔ M[${hex(r.ea)}] → AC ${hex(r.ac)}, M ${hex(r.m)}`;
-    else effect = `AC ← ${hex(r.ac0)} ${SYMBOL[r.op]} ${hex(r.m0)} = ${hex(r.ac)}`;
+    const A = hex(r.ac0);
+    const M = hex(r.m0);
+    const at = `M[${hex(r.ea)}]`;
+    const effect = [
+      `AC ← ${A} AND ${M} = ${hex(r.ac)}`,
+      `AC ← ${A} + ${M} = ${hex(r.ac)}, E ← ${r.e}`,
+      `AC ← ${at} = ${M}`,
+      `${at} ← AC = ${A}`,
+      `PC ← EA = ${hex(r.pc)}`,
+      `${at} ← PC = ${hex(r.pc0)}, PC ← EA + 1 = ${hex(r.pc)}`,
+      `${at} ← ${M} + 1 = ${hex(r.m)}, ${r.m === 0 ? `zero → PC ← ${hex(r.pc0)} + 1 = ${hex(r.pc)}` : 'not zero → no skip'}`,
+    ][r.op];
     return { head: `${r.name} · ${r.indirect ? 'indirect' : 'direct'}`, route, effect };
   }
 
   /* ── Question bank ──────────────────────────────────────── */
   /* l: level · b: first address of the memory window · i: instruction word
-   * a: AC before execution · m: memory window contents (b, b+1, …)
+   * a: AC before · e: E before · p: PC before · m: memory window contents (b, b+1, …)
    * Answers are derived from these fields by execute(). */
 
   const BANK = [
     // Level 1
-    { l: 1, b: "00B9", i: "10BE", a: "00B0", m: ["0052", "0034", "00FF", "001B", "0077", "0094"] },
-    { l: 1, b: "0918", i: "3919", a: "0065", m: ["006C", "00F1", "0085", "0097", "00AF", "0040"] },
-    { l: 1, b: "0240", i: "2242", a: "005E", m: ["005D", "0098", "00FF", "006C", "0050", "006C"] },
-    { l: 1, b: "0A81", i: "2A82", a: "0053", m: ["00B0", "0084", "0041", "0076", "0058", "00E0"] },
-    { l: 1, b: "0F88", i: "1F88", a: "0083", m: ["00BE", "002D", "00FB", "0063", "0093", "0064"] },
-    { l: 1, b: "01D8", i: "11DC", a: "0047", m: ["009F", "0019", "00A1", "00B0", "0004", "00ED"] },
-    { l: 1, b: "02C8", i: "22CB", a: "0063", m: ["0048", "00AD", "0044", "00D1", "0057", "00AE"] },
-    { l: 1, b: "0FD8", i: "2FDA", a: "0014", m: ["0022", "0078", "0051", "001A", "0088", "0093"] },
-    { l: 1, b: "0160", i: "3164", a: "007A", m: ["007F", "001C", "0081", "0051", "0052", "00E3"] },
-    { l: 1, b: "0268", i: "2269", a: "00F0", m: ["00F4", "0046", "0062", "0028", "00E5", "0087"] },
-    { l: 1, b: "0DB8", i: "2DB8", a: "00E9", m: ["0033", "00F1", "00FD", "0089", "0034", "001C"] },
-    { l: 1, b: "0581", i: "1581", a: "0040", m: ["0093", "0086", "00BA", "00B7", "00A1", "0057"] },
+    { l: 1, b: "00B9", i: "10BE", a: "00B0", e: "0", p: "0922", m: ["0052", "0034", "00FF", "001B", "0077", "0094"] },
+    { l: 1, b: "0055", i: "305A", a: "006C", e: "0", p: "01F4", m: ["0008", "0085", "0097", "00AF", "0040", "0065"] },
+    { l: 1, b: "0358", i: "335A", a: "0098", e: "0", p: "000F", m: ["00F4", "006C", "005D", "006C", "00A8", "00A5"] },
+    { l: 1, b: "0D78", i: "3D7C", a: "0041", e: "0", p: "0AAC", m: ["0076", "0058", "00E0", "00F9", "0093", "00FD"] },
+    { l: 1, b: "01EA", i: "31EB", a: "0063", e: "0", p: "0CC1", m: ["0093", "00FB", "001E", "005A", "00B7", "00F3"] },
+    { l: 1, b: "0048", i: "304B", a: "0029", e: "0", p: "0D17", m: ["00ED", "002D", "0021", "00B0", "007A", "00A2"] },
+    { l: 1, b: "0630", i: "1635", a: "00AE", e: "0", p: "013C", m: ["00FF", "000D", "003F", "0007", "0056", "0057"] },
+    { l: 1, b: "0220", i: "1223", a: "0015", e: "0", p: "07F1", m: ["0052", "006D", "0064", "0093", "0052", "007A"] },
+    { l: 1, b: "01CA", i: "21CF", a: "00E6", e: "0", p: "0D34", m: ["0050", "0054", "003E", "0046", "00F0", "0026"] },
+    { l: 1, b: "0618", i: "161D", a: "0027", e: "0", p: "0FD7", m: ["001A", "001E", "0033", "00E9", "0097", "0073"] },
+    { l: 1, b: "0888", i: "288B", a: "00F4", e: "0", p: "0B77", m: ["0016", "0093", "0041", "00C4", "0086", "00BA"] },
+    { l: 1, b: "0A08", i: "2A08", a: "00D5", e: "0", p: "077C", m: ["00DF", "0096", "00F9", "0083", "0019", "006E"] },
     // Level 2
-    { l: 2, b: "0120", i: "5120", a: "000F", m: ["2230", "E321", "0000", "0000", "0000", "0000"] },
-    { l: 2, b: "0110", i: "1115", a: "0965", m: ["0F94", "0833", "018A", "06DE", "077C", "0FA0"] },
-    { l: 2, b: "0DF4", i: "5DF6", a: "0601", m: ["096C", "070A", "0A5E", "0D11", "015E", "0DD5"] },
-    { l: 2, b: "0410", i: "4415", a: "0AA4", m: ["0406", "093A", "0E1E", "0BA6", "082F", "0273"] },
-    { l: 2, b: "0088", i: "3089", a: "0E71", m: ["0140", "0934", "051A", "0173", "0BBE", "0E04"] },
-    { l: 2, b: "0C34", i: "7C39", a: "0E33", m: ["0276", "0FBE", "0C62", "0BB7", "0AC2", "0455"] },
-    { l: 2, b: "0790", i: "1793", a: "04C7", m: ["0B23", "01F5", "03B8", "0DA6", "0814", "03D5"] },
-    { l: 2, b: "0B19", i: "1B1A", a: "04E1", m: ["01FB", "0890", "05B4", "0600", "044F", "0DAB"] },
-    { l: 2, b: "0C18", i: "1C18", a: "08CB", m: ["0BAB", "0ADA", "0033", "096D", "0CCD", "078B"] },
-    { l: 2, b: "0865", i: "2866", a: "0C10", m: ["0BBB", "0992", "02B9", "05F8", "0309", "009F"] },
-    { l: 2, b: "07B8", i: "27B8", a: "0D51", m: ["0B67", "03EF", "05A8", "0907", "0CC8", "0FE7"] },
-    { l: 2, b: "0AE8", i: "7AEA", a: "0FC5", m: ["0BF2", "0371", "0E85", "0C36", "0A2D", "0797"] },
-    { l: 2, b: "0FCD", i: "6FCE", a: "0CE9", m: ["0D75", "08AC", "0382", "0EF0", "01FE", "04B8"] },
-    { l: 2, b: "0CF8", i: "0CFD", a: "08A8", m: ["04CF", "09CB", "0DAF", "0506", "0E12", "05DF"] },
-    { l: 2, b: "0DE0", i: "4DE1", a: "0D5C", m: ["0BA1", "0693", "0D82", "027E", "0DAA", "07E9"] },
-    { l: 2, b: "0098", i: "109C", a: "0E89", m: ["0410", "0810", "0589", "07FA", "0844", "09AF"] },
-    { l: 2, b: "0B20", i: "3B23", a: "0BC8", m: ["07B3", "0039", "0670", "02EF", "08A1", "0C03"] },
-    { l: 2, b: "0841", i: "1845", a: "0DE8", m: ["0438", "0160", "0780", "036B", "00EB", "0E23"] },
+    { l: 2, b: "0120", i: "5120", a: "000F", e: "0", p: "0110", m: ["2230", "E321", "0000", "0000", "0000", "0000"] },
+    { l: 2, b: "08E4", i: "68E5", a: "0A5E", e: "0", p: "0DD4", m: ["0601", "0613", "070A", "04E7", "0D11", "015E"] },
+    { l: 2, b: "0410", i: "3415", a: "09AD", e: "0", p: "007A", m: ["0406", "093A", "0E1E", "0BA6", "082F", "0273"] },
+    { l: 2, b: "0248", i: "024B", a: "0140", e: "0", p: "09CE", m: ["0B56", "051A", "0173", "0E71", "0E04", "0C41"] },
+    { l: 2, b: "0F84", i: "6F89", a: "0FBE", e: "0", p: "02C2", m: ["0C62", "0BB7", "0AC2", "0596", "0792", "0276"] },
+    { l: 2, b: "033F", i: "5343", a: "03B8", e: "0", p: "0AB9", m: ["04EF", "0814", "03D5", "0B23", "01F5", "0243"] },
+    { l: 2, b: "0478", i: "247B", a: "0600", e: "0", p: "00F8", m: ["044F", "0DAB", "0C25", "05B4", "0243", "0997"] },
+    { l: 2, b: "0BA0", i: "1BA0", a: "0CCD", e: "0", p: "0991", m: ["096D", "0869", "0F03", "054E", "0AA6", "0458"] },
+    { l: 2, b: "0C03", i: "4C05", a: "009F", e: "0", p: "0D50", m: ["07C1", "0640", "0309", "0137", "0176", "0B67"] },
+    { l: 2, b: "0EC0", i: "2EC4", a: "0AF3", e: "0", p: "0BF1", m: ["03C4", "0EFE", "041A", "0726", "0FE7", "0FC5"] },
+    { l: 2, b: "0378", i: "537A", a: "0E10", e: "0", p: "0D89", m: ["0DCB", "0A3C", "0FE2", "08AC", "0CE9", "0D75"] },
+    { l: 2, b: "0389", i: "038D", a: "00F1", e: "0", p: "0DAE", m: ["0B19", "0EE9", "05DF", "08A8", "0566", "09CB"] },
+    { l: 2, b: "050A", i: "250A", a: "0A11", e: "0", p: "027E", m: ["08CE", "0693", "0B86", "0BA1", "094A", "0D82"] },
+    { l: 2, b: "0D98", i: "0D99", a: "0CF6", e: "0", p: "0CCD", m: ["0844", "001C", "0410", "0810", "0589", "07FA"] },
+    { l: 2, b: "09A8", i: "39AC", a: "02EF", e: "0", p: "0C02", m: ["0BC8", "07B3", "0039", "0670", "0876", "08A1"] },
+    { l: 2, b: "0841", i: "1845", a: "0DE8", e: "0", p: "0715", m: ["0438", "0160", "0780", "036B", "00EB", "0E23"] },
+    { l: 2, b: "0CF0", i: "4CF2", a: "0B47", e: "0", p: "0D4A", m: ["0122", "073F", "0CA1", "0E06", "0BA8", "0AE4"] },
+    { l: 2, b: "0798", i: "2799", a: "0ED6", e: "0", p: "0AAF", m: ["09B7", "0281", "0CA2", "0DA5", "092D", "0F33"] },
     // Level 3
-    { l: 3, b: "0715", i: "3719", a: "73E9", m: ["2C4F", "E061", "BA8B", "0715", "0715", "79ED"] },
-    { l: 3, b: "00E9", i: "40EE", a: "84DC", m: ["4891", "D93F", "DB35", "1E78", "63E0", "00ED"] },
-    { l: 3, b: "0CDB", i: "BCDB", a: "6671", m: ["0CDC", "6C1F", "0CDF", "6644", "0CDC", "0CDC"] },
-    { l: 3, b: "0708", i: "A70B", a: "B006", m: ["EF70", "52CB", "070B", "0709", "070A", "DA44"] },
-    { l: 3, b: "05DB", i: "C5DF", a: "F366", m: ["DDE0", "05DF", "05DC", "05DC", "05DD", "475E"] },
-    { l: 3, b: "0E66", i: "CE67", a: "CBC6", m: ["2317", "0E6A", "012E", "225B", "0E68", "0915"] },
-    { l: 3, b: "008F", i: "9090", a: "D8AE", m: ["97FF", "0093", "0092", "F7EB", "102D", "C428"] },
-    { l: 3, b: "09B3", i: "C9B7", a: "750C", m: ["7B36", "09B6", "55A0", "D507", "09B4", "F066"] },
-    { l: 3, b: "0148", i: "B14C", a: "CBA3", m: ["014B", "014C", "2935", "FAD5", "0149", "38E5"] },
-    { l: 3, b: "0753", i: "4758", a: "FFEB", m: ["7A73", "8CEB", "C2CD", "0753", "F267", "42AA"] },
-    { l: 3, b: "07FF", i: "B800", a: "D23C", m: ["F625", "0803", "93E7", "BEDA", "0802", "9666"] },
-    { l: 3, b: "0640", i: "2641", a: "7BA8", m: ["2D9F", "8457", "0641", "CAAC", "0640", "0642"] },
-    { l: 3, b: "0745", i: "B749", a: "5F2D", m: ["B742", "074A", "0748", "0749", "0747", "0749"] },
-    { l: 3, b: "03F8", i: "A3FC", a: "4624", m: ["AE42", "F572", "1FE0", "03F9", "03FB", "DB4F"] },
-    { l: 3, b: "0B9F", i: "4BA3", a: "2015", m: ["0A04", "EA12", "4CD3", "B12D", "0B9F", "94B7"] },
-    { l: 3, b: "0D18", i: "1D1B", a: "863E", m: ["674F", "0D18", "0D18", "0D19", "0D18", "F9A4"] },
-    { l: 3, b: "0100", i: "C102", a: "034C", m: ["43D8", "4773", "0105", "13FF", "0102", "0101"] },
-    { l: 3, b: "0570", i: "B571", a: "DE59", m: ["FDDF", "0574", "0575", "8C07", "0572", "E947"] },
-    { l: 3, b: "0D35", i: "CD35", a: "6971", m: ["0D39", "6E71", "0D36", "0D3A", "0D37", "0D37"] },
-    { l: 3, b: "05D1", i: "C5D2", a: "A1A0", m: ["05D3", "05D5", "05D2", "F73F", "9A8B", "0C58"] },
-    { l: 3, b: "0A28", i: "9A2C", a: "79FC", m: ["0A2D", "0A2C", "2198", "0A2D", "0A29", "9084"] },
-    { l: 3, b: "0A58", i: "4A59", a: "DD01", m: ["0A5D", "7B4D", "DD63", "0A5D", "181E", "4591"] },
+    { l: 3, b: "0E5C", i: "DE61", a: "63E0", e: "1", p: "0667", m: ["0E60", "1E78", "0E5C", "0E5C", "833F", "0E5D"] },
+    { l: 3, b: "0AE9", i: "AAEC", a: "CD2E", e: "1", p: "0B00", m: ["7CB5", "0CED", "0AEA", "0AEE", "EBA6", "0AE9"] },
+    { l: 3, b: "0AC9", i: "3ACE", a: "95F0", e: "0", p: "0625", m: ["760A", "21CC", "7B37", "4EE6", "5D91", "0AC9"] },
+    { l: 3, b: "0F1E", i: "3F21", a: "88D9", e: "1", p: "055E", m: ["2802", "BAC2", "F1DB", "0F1F", "0F1F", "D9FE"] },
+    { l: 3, b: "0238", i: "8238", a: "B610", e: "0", p: "0F7D", m: ["0239", "023B", "023D", "080A", "E251", "A272"] },
+    { l: 3, b: "0C30", i: "CC33", a: "9C5C", e: "1", p: "055A", m: ["0C34", "FAA8", "0C34", "0C32", "4F4C", "40EE"] },
+    { l: 3, b: "06E0", i: "B6E5", a: "13E9", e: "0", p: "038E", m: ["245E", "700C", "1AC3", "5304", "977D", "06E4"] },
+    { l: 3, b: "0810", i: "8811", a: "809E", e: "1", p: "05D8", m: ["C59A", "0815", "E4D3", "DD93", "42AA", "0812"] },
+    { l: 3, b: "0D90", i: "0D90", a: "90B8", e: "0", p: "0966", m: ["0D93", "80BF", "C223", "4FCC", "74B7", "A403"] },
+    { l: 3, b: "0B08", i: "EB0A", a: "BD5A", e: "0", p: "01E7", m: ["0B0C", "C585", "0B0C", "F406", "63EA", "0B0C"] },
+    { l: 3, b: "08E8", i: "88EC", a: "5EE5", e: "0", p: "0EB2", m: ["55AB", "D53C", "08E8", "A9BB", "08EA", "08E8"] },
+    { l: 3, b: "0CDB", i: "1CDC", a: "91D5", e: "1", p: "0777", m: ["0CDE", "0CDB", "4213", "4624", "AE42", "F572"] },
+    { l: 3, b: "09BF", i: "69C3", a: "12E7", e: "1", p: "0B0B", m: ["1570", "0A04", "EA12", "4CD3", "6177", "99C1"] },
+    { l: 3, b: "00A4", i: "C0A5", a: "B671", e: "0", p: "00F9", m: ["00A6", "00A4", "63FE", "F9A4", "00A4", "4BC6"] },
+    { l: 3, b: "0F00", i: "DF01", a: "4773", e: "1", p: "03CC", m: ["A7D7", "0F03", "0F04", "0F01", "0F01", "0F04"] },
+    { l: 3, b: "078E", i: "678F", a: "E947", e: "0", p: "0AD8", m: ["6D28", "0791", "2BB9", "D808", "FAE3", "4381"] },
+    { l: 3, b: "0393", i: "A395", a: "DF5A", e: "1", p: "040B", m: ["F9AE", "0398", "0394", "2A31", "3050", "3DCD"] },
+    { l: 3, b: "09A0", i: "19A4", a: "0C1B", e: "0", p: "08A3", m: ["09A4", "710B", "3717", "8E78", "04DD", "7B53"] },
+    { l: 3, b: "04DC", i: "04DE", a: "A61B", e: "1", p: "0360", m: ["D042", "04E1", "04DC", "DB2C", "1237", "04E0"] },
+    { l: 3, b: "07B3", i: "97B6", a: "26CB", e: "1", p: "01BC", m: ["FF5B", "07B6", "07B7", "07B8", "07B5", "07B4"] },
+    { l: 3, b: "095E", i: "B95E", a: "6D56", e: "0", p: "0D9F", m: ["0961", "B1FB", "2CE7", "095F", "0963", "EF18"] },
+    { l: 3, b: "08D8", i: "B8D9", a: "6DD4", e: "1", p: "0AE2", m: ["638F", "08DB", "43D1", "08DD", "4EA3", "4827"] },
     // Level 4
-    { l: 4, b: "04AD", i: "14B1", a: "1B34", m: ["F395", "04B0", "04AD", "893B", "04AF", "8011"] },
-    { l: 4, b: "0EDE", i: "6EE3", a: "DA01", m: ["0EDF", "8E32", "4762", "7698", "027D", "0EE1"] },
-    { l: 4, b: "04E8", i: "A4EB", a: "AB32", m: ["04EA", "FD7A", "B378", "04E8", "F832", "C9E5"] },
-    { l: 4, b: "04B8", i: "A4BB", a: "6888", m: ["04BB", "04B8", "04BC", "04BA", "3B79", "1785"] },
-    { l: 4, b: "0BE0", i: "EBE1", a: "D756", m: ["B30D", "0BE5", "665C", "1389", "0CCC", "0BE2"] },
-    { l: 4, b: "09A4", i: "D9A5", a: "D8D4", m: ["57D5", "09A9", "09A9", "09A8", "09A9", "09A4"] },
-    { l: 4, b: "022A", i: "122F", a: "DE2A", m: ["0DB3", "1591", "022A", "022C", "63D6", "022D"] },
-    { l: 4, b: "05D8", i: "95DD", a: "FB07", m: ["42DC", "DFFF", "05DD", "05D9", "05D9", "05DA"] },
-    { l: 4, b: "037D", i: "4381", a: "A4E9", m: ["BD65", "8141", "037D", "C80D", "E006", "B4E2"] },
-    { l: 4, b: "08D7", i: "E8DC", a: "7277", m: ["EC7E", "B210", "08DA", "08D9", "51FB", "08D7"] },
-    { l: 4, b: "0841", i: "9841", a: "8D7A", m: ["0846", "CC8A", "0845", "BC62", "1E35", "93A9"] },
-    { l: 4, b: "03B2", i: "03B7", a: "9A82", m: ["A84A", "E121", "03B3", "03B4", "C18E", "03B2"] },
-    { l: 4, b: "0218", i: "621C", a: "E54E", m: ["C5AA", "021B", "8D40", "7BA2", "021A", "021B"] },
-    { l: 4, b: "043F", i: "0443", a: "F28D", m: ["63C5", "E1E2", "0440", "0441", "0444", "C15D"] },
-    { l: 4, b: "0CB6", i: "1CB6", a: "7816", m: ["0CBA", "24AA", "94B4", "0CBB", "0CB8", "0CB6"] },
-    { l: 4, b: "09D9", i: "19DD", a: "2EDB", m: ["250C", "EC43", "DCF0", "69AE", "09D9", "09DB"] },
-    { l: 4, b: "0EF8", i: "6EFA", a: "A925", m: ["0EFB", "311F", "385A", "14F6", "DB81", "9CFA"] },
-    { l: 4, b: "0C08", i: "CC0A", a: "0080", m: ["0C09", "7E12", "0C08", "027B", "0C0B", "0C0B"] },
-    { l: 4, b: "0450", i: "B453", a: "F351", m: ["1684", "0527", "6A2F", "0451", "8B2E", "A053"] },
-    { l: 4, b: "04E8", i: "94EA", a: "FD2C", m: ["3F0C", "F7E7", "04EC", "04ED", "04EA", "6467"] },
-    { l: 4, b: "05D2", i: "F5D5", a: "8033", m: ["B6F1", "8E18", "05D5", "05D4", "9871", "32D7"] },
-    { l: 4, b: "05E7", i: "45E7", a: "031A", m: ["05EA", "3F12", "6B14", "05E7", "F165", "7078"] },
-    { l: 4, b: "0528", i: "752C", a: "75E1", m: ["03E6", "995D", "DDFE", "E4CC", "0528", "7C5F"] },
-    { l: 4, b: "0248", i: "D24D", a: "B984", m: ["F535", "0248", "024B", "024C", "DAB7", "024A"] },
+    { l: 4, b: "0B28", i: "6B28", a: "9701", e: "0", p: "09D1", m: ["0B2D", "9D75", "4B31", "BB61", "4D6C", "488A"] },
+    { l: 4, b: "01F0", i: "91F3", a: "FE88", e: "0", p: "0139", m: ["01F5", "01F0", "8E79", "01F1", "44E8", "DEC7"] },
+    { l: 4, b: "0230", i: "4234", a: "6F28", e: "1", p: "05DA", m: ["9AB3", "0235", "B7DE", "6802", "293F", "4DEF"] },
+    { l: 4, b: "0D42", i: "1D43", a: "0458", e: "0", p: "0A1D", m: ["04E7", "0112", "EED2", "26FB", "0D42", "EE48"] },
+    { l: 4, b: "0580", i: "A582", a: "5D63", e: "1", p: "0459", m: ["EBB0", "36ED", "0580", "6E6B", "0585", "6D9C"] },
+    { l: 4, b: "07FC", i: "97FC", a: "FC66", e: "1", p: "08F8", m: ["07FD", "07FF", "CCEF", "CB2D", "E006", "0800"] },
+    { l: 4, b: "02A0", i: "D2A2", a: "D48C", e: "0", p: "0514", m: ["1062", "02A5", "02A1", "C10A", "EC7E", "7277"] },
+    { l: 4, b: "0A80", i: "3A83", a: "3398", e: "0", p: "0EE9", m: ["0A81", "EFEA", "D7B5", "0A84", "0A81", "93A9"] },
+    { l: 4, b: "0B18", i: "CB1D", a: "DBCF", e: "0", p: "0C62", m: ["0B1C", "0B1C", "9A82", "0B1A", "0B19", "0B19"] },
+    { l: 4, b: "0218", i: "521C", a: "E54E", e: "1", p: "043A", m: ["C5AA", "021B", "8D40", "7BA2", "021A", "021B"] },
+    { l: 4, b: "0013", i: "C018", a: "E1E2", e: "1", p: "0CC3", m: ["0014", "0016", "E81B", "C15D", "63C5", "0017"] },
+    { l: 4, b: "038D", i: "0391", a: "2A24", e: "1", p: "09E0", m: ["24AA", "94B4", "02D6", "0392", "7E5E", "038D"] },
+    { l: 4, b: "026F", i: "C274", a: "DCF0", e: "0", p: "0EAD", m: ["0274", "0272", "0274", "0273", "51AB", "026F"] },
+    { l: 4, b: "0A88", i: "9A8D", a: "F90B", e: "1", p: "0028", m: ["0A8B", "4D61", "0A88", "C15A", "65AC", "0A88"] },
+    { l: 4, b: "0EE0", i: "4EE4", a: "12D8", e: "1", p: "08B2", m: ["A291", "4504", "0EE5", "0EE2", "0EE3", "380A"] },
+    { l: 4, b: "05E8", i: "55EA", a: "4E3D", e: "1", p: "0CDC", m: ["3A33", "05EA", "B958", "05EC", "71F7", "1C3A"] },
+    { l: 4, b: "03A8", i: "83AA", a: "D5A1", e: "0", p: "0DED", m: ["FC68", "3EEC", "03AD", "03A8", "98B6", "03AA"] },
+    { l: 4, b: "03DF", i: "B3E4", a: "237E", e: "0", p: "0563", m: ["326F", "9468", "03E3", "8649", "C064", "03E1"] },
+    { l: 4, b: "01D0", i: "B1D5", a: "7607", e: "0", p: "0BEB", m: ["08A6", "B686", "03E6", "995D", "DDFE", "01D1"] },
+    { l: 4, b: "0248", i: "D24D", a: "B984", e: "1", p: "0D92", m: ["F535", "0248", "024B", "024C", "DAB7", "024A"] },
+    { l: 4, b: "0E53", i: "5E54", a: "BF66", e: "1", p: "0089", m: ["0E58", "0E56", "8478", "6E8B", "B096", "FEEF"] },
+    { l: 4, b: "03F3", i: "93F7", a: "FDE9", e: "1", p: "07F6", m: ["C7AF", "C55E", "481C", "03F3", "03F6", "1AB7"] },
+    { l: 4, b: "0267", i: "D26A", a: "6479", e: "1", p: "0E43", m: ["6CA7", "026A", "026B", "026B", "026A", "018B"] },
+    { l: 4, b: "0048", i: "D04C", a: "EE4B", e: "1", p: "0917", m: ["004D", "004A", "18DA", "004A", "004D", "0048"] },
     // Level 5
-    { l: 5, b: "0D82", i: "7D88", a: "0ECC", m: ["3ED2", "0D89", "BF66", "602F", "8F5D", "8478", "40D5", "0D87"] },
-    { l: 5, b: "03F2", i: "A3F2", a: "C7AF", m: ["03F6", "481C", "FC01", "C54A", "03F5", "03F6", "55AF", "03F8"] },
-    { l: 5, b: "0940", i: "C942", a: "04FD", m: ["3B30", "0946", "0943", "0940", "9CE5", "8C8C", "0947", "0945"] },
-    { l: 5, b: "0198", i: "519A", a: "5909", m: ["A0DD", "019F", "0B6F", "C091", "536A", "9175", "EEC6", "8CCB"] },
-    { l: 5, b: "0EE4", i: "CEE6", a: "D19C", m: ["D1A6", "0EE7", "0EE9", "A0B7", "78EA", "1F46", "60D1", "D181"] },
-    { l: 5, b: "07EE", i: "17F5", a: "FB47", m: ["17A1", "07F1", "1496", "07F3", "D0BB", "B18D", "07F2", "07F0"] },
-    { l: 5, b: "090F", i: "D910", a: "3AD1", m: ["2909", "0916", "9E06", "09F3", "8D0D", "4E6D", "C8BE", "0913"] },
-    { l: 5, b: "03F0", i: "D3F3", a: "6728", m: ["DEB9", "8A74", "5AC4", "03F5", "C518", "0A6D", "8F17", "03F4"] },
-    { l: 5, b: "0D75", i: "8D76", a: "5A48", m: ["D1FF", "0D77", "46FA", "8AE1", "0D76", "0D76", "CD11", "1EC1"] },
-    { l: 5, b: "0CA0", i: "ACA3", a: "5F2C", m: ["9312", "0CA2", "0CA6", "0CA1", "0550", "0CA2", "0CA4", "27E4"] },
-    { l: 5, b: "09E0", i: "49E3", a: "02AE", m: ["09E2", "ADD7", "09E1", "09E5", "09E3", "FFC1", "940C", "3BEB"] },
-    { l: 5, b: "0B88", i: "EB8B", a: "DEE3", m: ["0B89", "0B88", "E78E", "0B88", "3882", "CCCC", "0B8C", "E5B2"] },
-    { l: 5, b: "0A0F", i: "AA16", a: "B78E", m: ["25F3", "F1D3", "12F7", "A2B3", "0A12", "0A11", "28C6", "0A13"] },
-    { l: 5, b: "0B90", i: "6B93", a: "8C74", m: ["0B96", "307A", "0B91", "4DCA", "E519", "0B94", "DDAE", "0B91"] },
-    { l: 5, b: "04E8", i: "34E8", a: "DA32", m: ["E21C", "BC12", "A36A", "FC83", "A664", "04EC", "1A97", "04EB"] },
-    { l: 5, b: "047A", i: "F47C", a: "BFAF", m: ["3432", "0481", "047D", "047B", "61A4", "0481", "AEE3", "E81F"] },
-    { l: 5, b: "0D90", i: "FD90", a: "CD4D", m: ["0D97", "ACC2", "5BBD", "0D90", "0D92", "4EBE", "0D92", "0D93"] },
-    { l: 5, b: "0988", i: "798C", a: "A01D", m: ["098F", "CAB0", "87DB", "7D8B", "098F", "098F", "0989", "0988"] },
-    { l: 5, b: "07F5", i: "A7F9", a: "876E", m: ["2E6B", "7845", "07FB", "11E1", "07F7", "07F9", "9D11", "F3FD"] },
-    { l: 5, b: "0118", i: "811F", a: "5975", m: ["BDF6", "EB9A", "1EDF", "0118", "9A35", "A16C", "011D", "011B"] },
-    { l: 5, b: "0036", i: "4037", a: "1AFF", m: ["EC51", "48AB", "7BD9", "24B0", "9459", "0039", "0036", "D899"] },
-    { l: 5, b: "0180", i: "C181", a: "0096", m: ["0184", "0187", "B9AE", "0181", "3B1F", "AB8D", "0181", "0186"] },
-    { l: 5, b: "0778", i: "877E", a: "D6B9", m: ["CAE3", "077C", "077B", "554C", "8384", "F052", "077E", "A4A3"] },
-    { l: 5, b: "018B", i: "F18B", a: "6492", m: ["018B", "1716", "ECF4", "018D", "018C", "0191", "0136", "17F2"] },
+    { l: 5, b: "08C7", i: "08CE", a: "F043", e: "0", p: "0783", m: ["652A", "98F6", "08CD", "FD3E", "97E4", "08CA", "B29E", "08CC"] },
+    { l: 5, b: "0D08", i: "8D0C", a: "7F1E", e: "1", p: "078A", m: ["BBA3", "0D0D", "0D08", "EA6F", "0D0E", "E022", "0D0D", "0D09"] },
+    { l: 5, b: "04BF", i: "64C1", a: "BB48", e: "1", p: "0794", m: ["04C2", "31F5", "04C4", "827E", "2C72", "6CF0", "8AA8", "04C2"] },
+    { l: 5, b: "0610", i: "E615", a: "6236", e: "1", p: "08A1", m: ["FC3C", "FFFF", "6728", "DEB9", "8A74", "0611", "0613", "C518"] },
+    { l: 5, b: "0CD0", i: "3CD7", a: "5430", e: "0", p: "0427", m: ["A4E7", "0CD6", "FCAC", "0CD2", "5A48", "D1FF", "F4F1", "0CD5"] },
+    { l: 5, b: "0821", i: "D822", a: "9EDC", e: "0", p: "09EE", m: ["0822", "0823", "70C6", "A11E", "F69D", "0823", "0825", "05AF"] },
+    { l: 5, b: "086A", i: "A86C", a: "AA3B", e: "0", p: "03A0", m: ["086B", "FFC1", "086F", "3BEB", "2AF0", "086C", "78FA", "0870"] },
+    { l: 5, b: "0E00", i: "8E05", a: "3882", e: "0", p: "089B", m: ["CCCC", "BC00", "E5B2", "0E04", "188E", "0E06", "CA79", "0E04"] },
+    { l: 5, b: "0FE0", i: "3FE1", a: "A2B3", e: "1", p: "070C", m: ["BC3B", "12F7", "28C6", "A697", "9A66", "9541", "4F1E", "C391"] },
+    { l: 5, b: "04E0", i: "84E7", a: "048F", e: "1", p: "0E21", m: ["420D", "CD5C", "04E1", "37D9", "37FA", "04E6", "53CF", "04E5"] },
+    { l: 5, b: "0129", i: "412E", a: "111A", e: "0", p: "0343", m: ["012C", "012F", "9370", "641C", "6DA7", "0129", "012B", "012E"] },
+    { l: 5, b: "0228", i: "A22C", a: "35BB", e: "1", p: "07EC", m: ["CDB5", "2CBE", "022F", "E780", "022D", "022F", "E1BF", "0229"] },
+    { l: 5, b: "01BD", i: "21C1", a: "2DE0", e: "1", p: "0B9F", m: ["01BF", "01C2", "54D0", "48C4", "01C4", "43BA", "560F", "01C2"] },
+    { l: 5, b: "0878", i: "E878", a: "BA18", e: "0", p: "0876", m: ["0879", "8729", "28A5", "087A", "0595", "2BC1", "3DD6", "138E"] },
+    { l: 5, b: "0781", i: "0787", a: "5F78", e: "0", p: "018C", m: ["E133", "4ADB", "0782", "0782", "0D44", "F555", "0788", "8ECB"] },
+    { l: 5, b: "0BD2", i: "0BD6", a: "F55D", e: "0", p: "07BD", m: ["0BD8", "C68C", "F0DC", "0BD8", "0BD5", "40B9", "B468", "540C"] },
+    { l: 5, b: "0938", i: "493D", a: "730B", e: "0", p: "0D7F", m: ["F6F2", "093F", "7318", "093E", "093B", "510A", "175B", "7428"] },
+    { l: 5, b: "0AA8", i: "EAAA", a: "AB86", e: "1", p: "0A49", m: ["3C11", "0AAE", "0AAC", "0AAF", "FFFF", "757E", "0C00", "3F55"] },
+    { l: 5, b: "00B9", i: "80BD", a: "AA97", e: "1", p: "0C3B", m: ["00C0", "00C0", "00B9", "00BD", "00BE", "00BA", "00BA", "00BF"] },
+    { l: 5, b: "0ED5", i: "DED8", a: "55A7", e: "0", p: "0277", m: ["0EDB", "BDBA", "FB1C", "0ED5", "A09B", "E58D", "FA01", "ABC6"] },
+    { l: 5, b: "01FA", i: "41FE", a: "A346", e: "1", p: "0F50", m: ["01FC", "3CD3", "01FE", "01FE", "01FF", "5053", "63E3", "3692"] },
+    { l: 5, b: "0E42", i: "6E47", a: "D97F", e: "1", p: "0A21", m: ["D375", "B809", "C781", "D878", "0E45", "FFFF", "7D7D", "0E43"] },
+    { l: 5, b: "0D98", i: "0D9C", a: "F267", e: "0", p: "0B40", m: ["BEA8", "0D9E", "7B24", "0D9D", "0D9A", "8AC2", "0D99", "588C"] },
+    { l: 5, b: "08C0", i: "A8C4", a: "DF29", e: "1", p: "0546", m: ["096C", "31A5", "54F3", "0CED", "08C7", "B9FC", "08C0", "08C0"] },
     // Level 6
-    { l: 6, b: "0ED5", i: "EED8", a: "C4C7", m: ["0EDB", "0EDB", "FA01", "4ED5", "F822", "0ED6", "0ED9", "0ED7"] },
-    { l: 6, b: "0148", i: "D14C", a: "4CDB", m: ["F517", "014B", "E0E3", "B2FB", "A14C", "BEEF", "B809", "014B"] },
-    { l: 6, b: "0F40", i: "9F46", a: "7FC4", m: ["7FFF", "0F45", "7B24", "2426", "0F46", "0F40", "6F45", "0F44"] },
-    { l: 6, b: "0510", i: "D510", a: "0001", m: ["0510", "B9FC", "BEEF", "FCA2", "7C74", "ED9B", "0511", "0514"] },
-    { l: 6, b: "05A7", i: "B5A7", a: "AA3E", m: ["35AE", "F0F0", "FF00", "74BE", "05AC", "F39D", "05AA", "C0DE"] },
-    { l: 6, b: "0597", i: "E597", a: "4B82", m: ["B59B", "FCA1", "FA78", "BDE1", "5BE6", "F77C", "1791", "0599"] },
-    { l: 6, b: "0200", i: "0205", a: "552E", m: ["ED9F", "2B31", "0207", "E9FD", "0206", "BDDE", "5F6E", "F852"] },
-    { l: 6, b: "0C9E", i: "BC9F", a: "00FF", m: ["0C9F", "0CA3", "9B06", "9AD5", "710A", "0CA2", "0C9F", "7296"] },
-    { l: 6, b: "0B5B", i: "9B5C", a: "BAE6", m: ["0B5E", "4B5C", "0B62", "8000", "3A37", "0B62", "0B5E", "0B5C"] },
-    { l: 6, b: "0110", i: "A115", a: "FFFF", m: ["5CB7", "A43B", "8FE4", "9CE0", "0112", "C116", "F0F0", "0115"] },
-    { l: 6, b: "0A16", i: "DA1B", a: "C6C2", m: ["0A1D", "8ED1", "0A1C", "0A1C", "0A1B", "DA16", "0A1A", "8000"] },
-    { l: 6, b: "0B38", i: "6B3B", a: "CE78", m: ["E2BE", "8000", "92CE", "0B3C", "A92E", "17F4", "9032", "25A9"] },
-    { l: 6, b: "0512", i: "B514", a: "1AD4", m: ["0519", "0519", "3518", "0514", "0519", "D3B5", "0519", "8A2F"] },
-    { l: 6, b: "09E8", i: "79EF", a: "426A", m: ["3E41", "1928", "09EC", "09E8", "4F84", "033E", "09E9", "AAAA"] },
-    { l: 6, b: "020B", i: "E211", a: "C998", m: ["116C", "465C", "0211", "C0DE", "C86E", "0B73", "520D", "020D"] },
-    { l: 6, b: "03B5", i: "43B6", a: "D062", m: ["E988", "03B9", "0F0F", "03BB", "B245", "7972", "FCCE", "B263"] },
-    { l: 6, b: "0C78", i: "9C78", a: "FB9C", m: ["0C7E", "A40B", "C7F8", "94CF", "0C79", "A81E", "C0DE", "8CE4"] },
-    { l: 6, b: "09E6", i: "99EC", a: "FB49", m: ["09ED", "09ED", "5641", "5385", "8C8F", "641C", "B9E6", "A058"] },
-    { l: 6, b: "0CA8", i: "ACA9", a: "0A4D", m: ["2496", "1CAB", "3286", "0CAF", "9369", "8000", "F0F0", "36D2"] },
-    { l: 6, b: "0140", i: "E145", a: "2FAD", m: ["BEF7", "0143", "0143", "0145", "0142", "D142", "0142", "6851"] },
-    { l: 6, b: "0C80", i: "2C82", a: "907C", m: ["5132", "47CF", "0C80", "0C80", "8D0C", "2831", "10A2", "0C84"] },
-    { l: 6, b: "0F80", i: "4F83", a: "ADE0", m: ["6FB7", "4ABF", "BA47", "C0DE", "381F", "C270", "9732", "AAA9"] },
-    { l: 6, b: "0157", i: "E159", a: "FF00", m: ["F80F", "E253", "0159", "CD21", "AAAA", "7046", "015B", "00FF"] },
-    { l: 6, b: "0104", i: "E104", a: "DC4A", m: ["6106", "E041", "0104", "E96A", "0001", "0001", "9C47", "A044"] },
-    { l: 6, b: "0B20", i: "1B20", a: "1109", m: ["9033", "FF00", "06EB", "0B22", "0B21", "24B8", "0B21", "70FD"] },
-    { l: 6, b: "0599", i: "95A0", a: "E6CE", m: ["C0DE", "D83E", "ADD3", "059B", "046F", "05A0", "6721", "D59E"] },
+    { l: 6, b: "09FE", i: "DA02", a: "5A54", e: "0", p: "08FB", m: ["0A01", "FDC4", "FF51", "0F0F", "4A02", "0A05", "09FE", "F0F0"] },
+    { l: 6, b: "0A98", i: "CA9F", a: "9D8E", e: "0", p: "09DE", m: ["0A9E", "F389", "2CD1", "5615", "BEEF", "5BE6", "0A99", "0A98"] },
+    { l: 6, b: "05D1", i: "D5D5", a: "8606", e: "1", p: "0D03", m: ["1F7A", "16D2", "B07E", "5F53", "05D8", "05D5", "352E", "366C"] },
+    { l: 6, b: "02FC", i: "D2FF", a: "9C9A", e: "0", p: "0E7E", m: ["A260", "FF00", "8DF0", "B302", "0303", "314B", "0300", "9AD5"] },
+    { l: 6, b: "0BA0", i: "0BA1", a: "D8EE", e: "1", p: "0402", m: ["0F0F", "0BA7", "0001", "1544", "0BA3", "169D", "0BA3", "0BA4"] },
+    { l: 6, b: "0F38", i: "0F38", a: "5555", e: "1", p: "067A", m: ["0F39", "C1C5", "0F39", "F0F0", "FFFF", "0F3B", "A43B", "8FE4"] },
+    { l: 6, b: "0D50", i: "AD56", a: "0F0F", e: "1", p: "0ED0", m: ["9D8F", "3D74", "FF00", "0D56", "A831", "C6F9", "0D56", "0D50"] },
+    { l: 6, b: "0156", i: "0157", a: "1CD4", e: "0", p: "0D17", m: ["015A", "0156", "015A", "F080", "73B3", "8DBA", "015D", "E2BE"] },
+    { l: 6, b: "05B8", i: "D5BF", a: "64B8", e: "1", p: "03A8", m: ["05BD", "5ECC", "C620", "8F61", "05BA", "7788", "F0F0", "E5BC"] },
+    { l: 6, b: "0E18", i: "AE1E", a: "5097", e: "1", p: "08B9", m: ["DFDE", "D7A9", "AAAA", "0E1F", "0E1A", "0E1C", "2E1F", "0E19"] },
+    { l: 6, b: "0B5D", i: "0B63", a: "D3D2", e: "1", p: "0DCF", m: ["CF09", "C998", "0B61", "465C", "5555", "C0DE", "0B5F", "0B73"] },
+    { l: 6, b: "0260", i: "9264", a: "97FC", e: "0", p: "0C89", m: ["CFAF", "FFFF", "818E", "0F0F", "D261", "0266", "7972", "FCCE"] },
+    { l: 6, b: "02F8", i: "D2FF", a: "8000", e: "1", p: "0206", m: ["02FF", "C7F8", "02F9", "C0DE", "A81E", "5F81", "8CE4", "02F8"] },
+    { l: 6, b: "0180", i: "D182", a: "397C", e: "0", p: "057F", m: ["0185", "53F8", "C180", "64CF", "7FCB", "5555", "10DC", "7FFF"] },
+    { l: 6, b: "0B90", i: "CB92", a: "24AE", e: "1", p: "0A2D", m: ["3286", "8B60", "4B94", "8000", "0B91", "0B90", "0B91", "5750"] },
+    { l: 6, b: "0960", i: "C963", a: "EBED", e: "1", p: "041C", m: ["0967", "0962", "AE96", "0966", "A2A0", "5555", "0965", "12AE"] },
+    { l: 6, b: "008D", i: "B08D", a: "8D0C", e: "0", p: "06FB", m: ["008F", "0091", "0090", "EA50", "4469", "0094", "76FE", "82C0"] },
+    { l: 6, b: "04B0", i: "D4B1", a: "9732", e: "0", p: "0073", m: ["AAA9", "D4B3", "B078", "04B6", "859B", "BEEF", "27E5", "2FA8"] },
+    { l: 6, b: "0560", i: "5560", a: "9522", e: "0", p: "00CD", m: ["0563", "4733", "C9A9", "F0F0", "31E4", "0563", "AAAA", "1234"] },
+    { l: 6, b: "01D0", i: "B1D5", a: "B680", e: "0", p: "06FE", m: ["01D4", "01D0", "01D5", "2053", "01D7", "01D6", "01D2", "5555"] },
+    { l: 6, b: "0728", i: "972C", a: "D234", e: "0", p: "0BE8", m: ["0729", "B975", "0729", "0729", "B72C", "C0DE", "072D", "ADD3"] },
+    { l: 6, b: "04A8", i: "34AE", a: "7FFF", e: "0", p: "0C37", m: ["87B3", "0F0F", "5BC0", "0F0F", "04AA", "8385", "04AC", "0001"] },
+    { l: 6, b: "0D92", i: "0D99", a: "FAB4", e: "1", p: "0C56", m: ["67DC", "0D99", "BEEF", "24C8", "6330", "07F2", "1234", "CE33"] },
+    { l: 6, b: "0C3D", i: "8C3E", a: "7FFF", e: "1", p: "0B74", m: ["0C44", "1C3E", "197D", "0C3F", "A9CA", "9319", "0C3F", "0F0F"] },
+    { l: 6, b: "0209", i: "E209", a: "EF6B", e: "0", p: "03D0", m: ["020E", "F853", "020A", "E0CF", "00FF", "020B", "DCF2", "0209"] },
+    { l: 6, b: "00B9", i: "80B9", a: "4247", e: "1", p: "01FD", m: ["00B9", "00BE", "00BD", "00BF", "EC74", "581F", "5386", "9A94"] },
   ];
 
   const LEVEL_NAMES = ['Warm-up', 'Direct', 'Indirect', 'Mixed', 'Tricky', 'Expert'];
@@ -308,13 +318,17 @@
       b.edgeMat.color.copy(tmpA.setHex(COLORS.edge).lerp(tmpB.setHex(color), clamp01(k * 1.4)));
     }
 
-    function paintRegister(b, title, value) {
+    function paintRegister(b, title, value, flag) {
       b.paint((c, w, h) => {
         c.textBaseline = 'alphabetic';
-        c.textAlign = 'left';
         c.fillStyle = 'rgba(255,255,255,0.4)';
         c.font = `600 ${h * 0.17}px ${FONT}`;
+        c.textAlign = 'left';
         c.fillText(title, w * 0.06, h * 0.28);
+        if (flag !== undefined) {
+          c.textAlign = 'right';
+          c.fillText(`E ${flag}`, w * 0.94, h * 0.28);
+        }
         c.textAlign = 'center';
         c.fillStyle = '#f4f5f8';
         c.font = `700 ${Math.min(h * 0.46, w * 0.17)}px ${FONT}`;
@@ -355,13 +369,15 @@
       rig.add(mesh);
     }
 
-    /* — static machine: instruction register, accumulator, memory — */
+    /* — static machine: instruction register, accumulator, program counter, memory — */
 
     const ir = makeBlock(3.1, 1.0, 1.0, 640);
     ir.pos.set(-4.7, 2.3, 0);
     const ac = makeBlock(3.1, 1.5, 1.2, 640);
     ac.pos.set(-4.7, 0.1, 0);
-    rig.add(ir.group, ac.group);
+    const pcBlock = makeBlock(3.1, 1.0, 1.0, 640);
+    pcBlock.pos.set(-4.7, -1.9, 0);
+    rig.add(ir.group, ac.group, pcBlock.group);
     caption('MEMORY', MEM_X, 3.45);
 
     let cells = [];
@@ -442,10 +458,11 @@
       ], color);
     }
 
-    /* data path between accumulator and a cell, routed behind the address path */
-    function dataPath(toAccumulator, cell, z) {
-      const s = toAccumulator ? leftOf(cell) : rightOf(ac);
-      const e = toAccumulator ? rightOf(ac) : leftOf(cell);
+    /* data path between a register (AC or PC) and a memory cell, routed behind the address path */
+    function flowPath(from, to, z) {
+      const fromCell = cells.includes(from);
+      const s = fromCell ? leftOf(from) : rightOf(from);
+      const e = fromCell ? rightOf(to) : leftOf(to);
       const dir = Math.sign(e.x - s.x);
       return makePath([s, V(s.x + dir * 1.4, s.y, z), V(e.x - dir * 1.4, e.y, z), e], COLORS.data);
     }
@@ -467,9 +484,10 @@
     function load(r) {
       run += 1;
       clearPaths();
-      [ir, ac].forEach((b) => { setGlow(b, 0, 0); b.group.scale.setScalar(1); });
+      [ir, ac, pcBlock].forEach((b) => { setGlow(b, 0, 0); b.group.scale.setScalar(1); });
       paintRegister(ir, 'IR', hex(r.word));
-      paintRegister(ac, 'AC', hex(r.ac0));
+      paintRegister(ac, 'AC', hex(r.ac0), r.e0);
+      paintRegister(pcBlock, 'PC', hex(r.pc0));
       buildMemory(r);
 
       const stagger = 55;
@@ -511,19 +529,28 @@
       if (!alive()) return;
 
       const moves = [];
-      if (r.reads) moves.push(travel(dataPath(true, target, -0.8), 680));
-      if (r.writes) moves.push(travel(dataPath(false, target, -1.4), 680));
+      switch (r.op) {
+        case 0: case 1: case 2: moves.push(travel(flowPath(target, ac, -0.8), 680)); break;
+        case 3: moves.push(travel(flowPath(ac, target, -0.8), 680)); break;
+        case 4: moves.push(travel(flowPath(target, pcBlock, -0.8), 680)); break;
+        case 5:
+          moves.push(travel(flowPath(pcBlock, target, -1.4), 680), travel(flowPath(target, pcBlock, -0.8), 680));
+          break;
+        default: if (r.pc !== r.pc0) moves.push(travel(flowPath(target, pcBlock, -0.8), 680));
+      }
       await Promise.all(moves);
       if (!alive()) return;
 
       const updates = [];
       const addr = hex(r.ea);
-      if (r.ac !== r.ac0) updates.push(settle(480, hex(r.ac), (t) => paintRegister(ac, 'AC', t)));
+      if (r.ac !== r.ac0 || r.e !== r.e0) updates.push(settle(480, hex(r.ac), (t) => paintRegister(ac, 'AC', t, r.e)));
+      if (r.pc !== r.pc0) updates.push(settle(480, hex(r.pc), (t) => paintRegister(pcBlock, 'PC', t)));
       if (r.m !== r.m0) updates.push(settle(480, hex(r.m), (t) => paintCell(target, addr, t)));
       await Promise.all(updates);
       if (!alive()) return;
 
-      setGlow(ac, verdict.ac ? COLORS.good : COLORS.bad, 0.8);
+      setGlow(ac, verdict.ac && verdict.e ? COLORS.good : COLORS.bad, 0.8);
+      setGlow(pcBlock, verdict.pc ? COLORS.good : COLORS.bad, 0.8);
       setGlow(target, verdict.ea && verdict.mem ? COLORS.good : COLORS.bad, 0.8);
       if (pointer && pointer !== target) setGlow(pointer, COLORS.ptr, 0.3);
     }
@@ -568,13 +595,14 @@
   const el = {
     level: $('stat-level'), levelName: $('stat-level-name'), pips: $('pips').children,
     streak: $('stat-streak'), score: $('stat-score'),
-    instr: $('instr'), acBefore: $('ac-before'), toast: $('toast'),
+    instr: $('instr'), acBefore: $('ac-before'), eBefore: $('e-before'), pcBefore: $('pc-before'),
+    toast: $('toast'),
     form: $('answer'), submit: $('btn-submit'), result: $('result'),
     fieldEa: $('field-ea'), lblMem: $('lbl-mem'),
-    inAc: $('in-ac'), inEa: $('in-ea'), inMem: $('in-mem'),
+    inAc: $('in-ac'), inE: $('in-e'), inPc: $('in-pc'), inEa: $('in-ea'), inMem: $('in-mem'),
     sheet: $('sheet'), isa: $('btn-isa'),
   };
-  const inputs = [el.inAc, el.inEa, el.inMem];
+  const inputs = [el.inAc, el.inE, el.inPc, el.inEa, el.inMem];
 
   const state = { level: 1, streak: 0, climb: 0, score: 0, phase: 'answering', r: null, showEa: false };
 
@@ -630,6 +658,8 @@
 
     el.instr.textContent = q.i;
     el.acBefore.textContent = q.a;
+    el.eBefore.textContent = q.e;
+    el.pcBefore.textContent = q.p;
     el.fieldEa.hidden = !state.showEa;
     el.form.classList.toggle('two', !state.showEa);
     el.lblMem.textContent = state.showEa ? 'M[EA]' : `M[${hex(r.ea)}]`;
@@ -649,9 +679,12 @@
     if (state.phase !== 'answering') return;
     const r = state.r;
     const read = (input) => (input.value === '' ? null : parseInt(input.value, 16));
-    const got = { ac: read(el.inAc), ea: state.showEa ? read(el.inEa) : r.ea, mem: read(el.inMem) };
+    const got = {
+      ac: read(el.inAc), e: read(el.inE), pc: read(el.inPc),
+      ea: state.showEa ? read(el.inEa) : r.ea, mem: read(el.inMem),
+    };
 
-    if (got.ac === null || got.ea === null || got.mem === null) {
+    if (Object.values(got).some((v) => v === null)) {
       el.form.classList.remove('shake');
       void el.form.offsetWidth;
       el.form.classList.add('shake');
@@ -660,8 +693,10 @@
       return;
     }
 
-    const verdict = { ac: got.ac === r.ac, ea: got.ea === r.ea, mem: got.mem === r.m };
-    const ok = verdict.ac && verdict.ea && verdict.mem;
+    const verdict = {
+      ac: got.ac === r.ac, e: got.e === r.e, pc: got.pc === r.pc, ea: got.ea === r.ea, mem: got.mem === r.m,
+    };
+    const ok = Object.values(verdict).every(Boolean);
     state.phase = 'result';
 
     let gain = 0;
@@ -682,9 +717,8 @@
     }
 
     inputs.forEach((input) => { input.readOnly = true; });
-    el.inAc.closest('.field').classList.add(verdict.ac ? 'good' : 'bad');
-    el.inEa.closest('.field').classList.add(verdict.ea ? 'good' : 'bad');
-    el.inMem.closest('.field').classList.add(verdict.mem ? 'good' : 'bad');
+    [[el.inAc, verdict.ac], [el.inE, verdict.e], [el.inPc, verdict.pc], [el.inEa, verdict.ea], [el.inMem, verdict.mem]]
+      .forEach(([input, good]) => input.closest('.field').classList.add(good ? 'good' : 'bad'));
     showResult(r, verdict, ok, gain);
     el.submit.firstChild.nodeValue = 'Next ';
     renderStats();
@@ -701,6 +735,8 @@
       `<div class="trace"><b>${ok ? x.head : 'Trace'}</b> · ${x.route}</div>` +
       `<div class="trace">${x.effect}</div>` +
       `<div class="truth"><span${mark(verdict.ac)}>AC <b>${hex(r.ac)}</b></span>` +
+      `<span${mark(verdict.e)}>E <b>${r.e}</b></span>` +
+      `<span${mark(verdict.pc)}>PC <b>${hex(r.pc)}</b></span>` +
       `<span${mark(verdict.ea)}>EA <b>${hex(r.ea)}</b></span>` +
       `<span${mark(verdict.mem)}>M[${hex(r.ea)}] <b>${hex(r.m)}</b></span></div>`;
     el.result.hidden = false;
@@ -709,10 +745,11 @@
   /* — events — */
 
   inputs.forEach((input) => {
+    const allowed = input === el.inE ? /[^01]/g : /[^0-9a-f]/gi;
     input.addEventListener('input', () => {
-      input.value = input.value.replace(/[^0-9a-f]/gi, '').toUpperCase().slice(0, 4);
+      input.value = input.value.replace(allowed, '').toUpperCase().slice(0, input.maxLength);
       input.closest('.field').classList.remove('bad', 'good');
-      if (input.value.length === 4 && state.phase === 'answering') focusStep(input, 1);
+      if (input.value.length === input.maxLength && state.phase === 'answering') focusStep(input, 1);
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Backspace' && input.value === '') focusStep(input, -1);

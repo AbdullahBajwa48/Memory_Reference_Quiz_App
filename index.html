@@ -30,7 +30,7 @@
     <section class="prompt" aria-label="Current instruction">
       <div class="prompt-label">Instruction</div>
       <div class="prompt-hex" id="instr">0000</div>
-      <div class="prompt-sub">AC <b id="ac-before">0000</b></div>
+      <div class="prompt-sub">AC <b id="ac-before">0000</b> · E <b id="e-before">0</b> · PC <b id="pc-before">0000</b></div>
     </section>
 
     <div class="toast" id="toast" role="status"></div>
@@ -42,6 +42,14 @@
         <label class="field">
           <span>AC</span>
           <input id="in-ac" inputmode="text" maxlength="4" spellcheck="false" autocapitalize="characters" placeholder="0000" aria-label="Accumulator after execution, hexadecimal">
+        </label>
+        <label class="field">
+          <span>E</span>
+          <input id="in-e" inputmode="numeric" maxlength="1" spellcheck="false" placeholder="0" aria-label="Carry flag E after execution, 0 or 1">
+        </label>
+        <label class="field">
+          <span>PC</span>
+          <input id="in-pc" inputmode="text" maxlength="4" spellcheck="false" autocapitalize="characters" placeholder="0000" aria-label="Program counter after execution, hexadecimal">
         </label>
         <label class="field" id="field-ea">
           <span>Address</span>
@@ -63,19 +71,18 @@
       <thead><tr><th>Hex</th><th>Op</th><th>Effect</th></tr></thead>
       <tbody>
         <tr><td>0 · 8</td><td>AND</td><td>AC ← AC ∧ M</td></tr>
-        <tr><td>1 · 9</td><td>ADD</td><td>AC ← AC + M</td></tr>
+        <tr><td>1 · 9</td><td>ADD</td><td>AC ← AC + M, E ← carry</td></tr>
         <tr><td>2 · A</td><td>LDA</td><td>AC ← M</td></tr>
         <tr><td>3 · B</td><td>STA</td><td>M ← AC</td></tr>
-        <tr><td>4 · C</td><td>SUB</td><td>AC ← AC − M</td></tr>
-        <tr><td>5 · D</td><td>OR</td><td>AC ← AC ∨ M</td></tr>
-        <tr><td>6 · E</td><td>XOR</td><td>AC ← AC ⊕ M</td></tr>
-        <tr><td>7 · F</td><td>XCH</td><td>AC ↔ M</td></tr>
+        <tr><td>4 · C</td><td>BUN</td><td>PC ← EA</td></tr>
+        <tr><td>5 · D</td><td>BSA</td><td>M ← PC, PC ← EA + 1</td></tr>
+        <tr><td>6 · E</td><td>ISZ</td><td>M ← M + 1, skip if 0</td></tr>
       </tbody>
     </table>
     <ul>
-      <li><b>0–7</b> direct: EA = address field</li>
-      <li><b>8–F</b> indirect: EA = low 12 bits of M[address field]</li>
-      <li>M means M[EA] · arithmetic wraps at 16 bits</li>
+      <li><b>0–6</b> direct: EA = address field</li>
+      <li><b>8–E</b> indirect: EA = low 12 bits of M[address field]</li>
+      <li>M means M[EA] · PC already points at the next instruction · skip: PC ← PC + 1</li>
     </ul>
   </aside>
 
