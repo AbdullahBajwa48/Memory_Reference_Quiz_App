@@ -709,8 +709,7 @@
       if (state.climb >= CLIMB && state.level < MAX_LEVEL) { state.level += 1; state.climb = 0; }
     } else {
       state.streak = 0;
-      state.climb = 0;
-      if (state.level > 1) state.level -= 1;
+     
     }
     if (state.level !== before) {
       toast(`${state.level > before ? 'Level up' : 'Level down'} · ${LEVEL_NAMES[state.level - 1]}`);
